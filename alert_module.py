@@ -1,6 +1,7 @@
 # alert_module.py
 import tkinter as tk
 import smtplib
+import geocoder  # <--- New backend dependency
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -10,21 +11,39 @@ SMTP_PORT = 587
 EMAIL_ADDRESS = "ramdhikshitha@gmail.com"
 EMAIL_PASSWORD = "qpcg rscv wilq hyml" 
 
+def get_current_location():
+    """Backend Logic: Fetches location via IP Address."""
+    try:
+        g = geocoder.ip('me')
+        if g.latlng:
+            lat, lng = g.latlng
+            city = g.city or "Unknown City"
+            # Creates a clickable link for emergency responders
+            maps_link = f"https://www.google.com/maps?q={lat},{lng}"
+            return f"Location: {city} ({lat}, {lng})\nMap Link: {maps_link}"
+        return "Location: Could not determine GPS coordinates."
+    except Exception:
+        return "Location: Service Unavailable."
+
 def send_email_alert(subject, message):
-    """Handles the background email transmission."""
+    """Handles background transmission + Location Data."""
+    # Append backend location data to every email
+    location_info = get_current_location()
+    full_body = f"{message}\n\n--- BACKEND LOG DATA ---\n{location_info}"
+
     try:
         msg = MIMEMultipart()
         msg['From'] = EMAIL_ADDRESS
         msg['To'] = EMAIL_ADDRESS 
         msg['Subject'] = subject
-        msg.attach(MIMEText(message, 'plain'))
+        msg.attach(MIMEText(full_body, 'plain'))
 
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
         server.starttls()
         server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
         server.send_message(msg)
         server.quit()
-        print("SUCCESS: Email alert sent.") 
+        print("SUCCESS: Email sent with location data.") 
     except Exception as e:
         print("ERROR: Failed to send email:", str(e))
 
@@ -33,16 +52,14 @@ def show_alert_popup(root, accident_text):
     popup = tk.Toplevel(root)
     popup.title("Accident Alert")
     
-    # --- DYNAMIC SCREEN CENTERING ---
-    width, height = 350, 200
-    screen_width = popup.winfo_screenwidth()
-    screen_height = popup.winfo_screenheight()
-    x = (screen_width // 2) - (width // 2)
-    y = (screen_height // 2) - (height // 2)
-    popup.geometry(f"{width}x{height}+{x}+{y}")
+    # Center the popup
+    w, h = 350, 200
+    x = (popup.winfo_screenwidth() // 2) - (w // 2)
+    y = (popup.winfo_screenheight() // 2) - (h // 2)
+    popup.geometry(f"{w}x{h}+{x}+{y}")
     
-    popup.attributes("-topmost", True) # Force window to the front
-    popup.focus_force()               # Grab keyboard focus immediately
+    popup.attributes("-topmost", True)
+    popup.focus_force()
 
     label = tk.Label(popup, 
                      text=f"DETECTED: {accident_text}\n\nPress '1' if you are SAFE", 
@@ -50,33 +67,24 @@ def show_alert_popup(root, accident_text):
     label.pack(pady=40)
 
     def on_safe(event=None):
-        """Triggers immediately on '1' key press."""
         if not response_received["value"]:
             response_received["value"] = True
-            
-            # 1. Close the window INSTANTLY
-            popup.destroy() 
-            
-            # 2. Then process the email in the background
+            popup.destroy() # Instant UI closure
             send_email_alert(
                 subject="Accident Notification - Person SAFE",
-                message=f"Status: {accident_text}. User confirmed they are safe."
+                message=f"Status: {accident_text}. User checked in as SAFE."
             )
 
-    # Bind the '1' key to the function
     popup.bind("1", on_safe)
 
     def timeout():
-        """Triggered if 10 seconds pass without input."""
         if not response_received["value"]:
             response_received["value"] = True
             if popup.winfo_exists():
                 popup.destroy()
-                
             send_email_alert(
                 subject="URGENT: Accident - No Response",
-                message=f"ALERT: {accident_text} detected! No response within 10 seconds."
+                message=f"ALERT: {accident_text} detected! No user response."
             )
 
-    # 10000ms = 10 second countdown
     popup.after(10000, timeout)
